@@ -63,7 +63,8 @@
     };
   }
 
-  /* 绕屏幕中心地面点旋转（dHeading）和倾斜（dPitch，正值朝地平线方向抬起） */
+  /* 绕屏幕中心地面点旋转（dHeading）和倾斜（dPitch，正值朝地平线方向抬起）。
+     供键盘旋转/倾斜和「缩小回正」用。鼠标拖动不走这里（见 orbitGlobeCenter / pivotDrag）。 */
   function orbit(dHeading, dPitch) {
     const target = centerTarget();
     if (!target) return false;
@@ -76,6 +77,58 @@
     camera.lookAtTransform(C.Matrix4.IDENTITY);
     return true;
   }
+
+  /* 绕球心的轨道旋转：左键拖动。
+     旋转中心是地心，不是屏幕中心的地面点，所以：
+     - 拖动经过南北极不会卡死、不会翻转（heading 连续变化，pitch 有限位）；
+     - 和谷歌地球一样，拖动就是拨动整个地球。 */
+  function orbitGlobeCenter(dxPx, dyPx) {
+    const k = Math.PI / Math.max(320, canvas.clientHeight);
+    const r = Math.max(C.Cartesian3.magnitude(camera.positionWC), MIN_RANGE);
+    const carto = C.Cartographic.fromCartesian(camera.positionWC);
+    // 在相机当前位置的 ENU 里重算朝向
+    const m = C.Transforms.eastNorthUpToFixedFrame(C.Cartesian3.fromRadians(carto.longitude, carto.latitude, 0));
+    const east = new C.Cartesian3(m[0], m[4], m[8]);
+    const north = new C.Cartesian3(m[1], m[5], m[9]);
+    const up = new C.Cartesian3(m[2], m[6], m[10]);
+    const heading = camera.heading + dxPx * k;
+    const pitch = clamp(camera.pitch - dyPx * k, MIN_PITCH, MAX_PITCH);
+    if (!Number.isFinite(heading) || !Number.isFinite(pitch)) return;
+    const dir = new C.Cartesian3(
+      east.x * Math.sin(heading) * Math.cos(pitch) + north.x * Math.cos(heading) * Math.cos(pitch) + up.x * Math.sin(pitch),
+      east.y * Math.sin(heading) * Math.cos(pitch) + north.y * Math.cos(heading) * Math.cos(pitch) + up.y * Math.sin(pitch),
+      east.z * Math.sin(heading) * Math.cos(pitch) + north.z * Math.cos(heading) * Math.cos(pitch) + up.z * Math.sin(pitch)
+    );
+    const dest = C.Cartesian3.multiplyByScalar(dir, r, new C.Cartesian3());
+    camera.setView({ destination: dest, orientation: { heading, pitch, roll: 0 } });
+  }
+
+  /* Alt+左拖：抬头/低头（相机原地点头，位置不动） */
+  function lookBy(dyPx) {
+    const k = C.Math.toRadians(0.12); // 每像素 0.12°
+    camera.lookUp(-dyPx * k);
+  }
+
+  /* 双击按住拖：绕双击处地面点环视（旋转点锁定在该点） */
+  let pivotPoint = null;
+  let pivotHpr = null;
+  function startPivot(pos) {
+    const p = pickGround(pos);
+    if (!p) return false;
+    pivotPoint = p;
+    pivotHpr = hprAbout(p);
+    return true;
+  }
+  function pivotDrag(dxPx, dyPx) {
+    if (!pivotPoint || !pivotHpr) return;
+    const k = Math.PI / Math.max(320, canvas.clientHeight);
+    const heading = pivotHpr.heading + dxPx * k;
+    const pitch = clamp(pivotHpr.pitch - dyPx * k, MIN_PITCH, MAX_PITCH);
+    if (!Number.isFinite(heading) || !Number.isFinite(pitch)) return;
+    camera.lookAt(pivotPoint, new C.HeadingPitchRange(heading, pitch, pivotHpr.range));
+    camera.lookAtTransform(C.Matrix4.IDENTITY);
+  }
+  function endPivot() { pivotPoint = null; pivotHpr = null; }
 
   function currentRange() {
     const t = centerTarget();
@@ -308,20 +361,15 @@
     ssc.inertiaSpin = 0.92;
     ssc.inertiaTranslate = 0.92;
     ssc.inertiaZoom = 0.82;
-    // 滚轮缩放速率：Cesium 默认 5.0，调到 2.0 让缩放更缓慢、更接近谷歌地球手感
-    ssc.zoomFactor = 2.0;
-    // 左键拖动：抓着地球平移；滚轮 / 右键拖动：以鼠标位置为锚点缩放；
-    // 中键拖动、Shift/Ctrl+左键拖动：旋转和倾斜。
-    // 滚轮恢复 Cesium 原生处理（方向正确、极地安全、带惯性），不再自建缩放。
-    ssc.rotateEventTypes = [C.CameraEventType.LEFT_DRAG];
-    ssc.zoomEventTypes = [C.CameraEventType.WHEEL, C.CameraEventType.PINCH, C.CameraEventType.RIGHT_DRAG];
-    ssc.tiltEventTypes = [
-      C.CameraEventType.MIDDLE_DRAG,
-      C.CameraEventType.PINCH,
-      { eventType: C.CameraEventType.LEFT_DRAG, modifier: C.KeyboardEventModifier.SHIFT },
-      { eventType: C.CameraEventType.LEFT_DRAG, modifier: C.KeyboardEventModifier.CTRL },
-      { eventType: C.CameraEventType.RIGHT_DRAG, modifier: C.KeyboardEventModifier.CTRL },
-    ];
+    // 滚轮缩放速率：Cesium 默认 5.0（一格约 1.8 倍，太灵敏），取 3.2（一格约 1.45 倍），
+    // 缓慢但不过分迟钝，接近谷歌地球手感
+    ssc.zoomFactor = 3.2;
+    // 关闭 Cesium 默认的拖动类交互：左拖/中拖/右拖/Shift/Ctrl 都由下方自定义 handler 接管，
+    // 只有滚轮（WHEEL）和触屏捏合（PINCH）留在 Cesium 原生（方向稳定、极地安全、带惯性）
+    ssc.rotateEventTypes = [];
+    ssc.zoomEventTypes = [C.CameraEventType.WHEEL, C.CameraEventType.PINCH];
+    ssc.tiltEventTypes = [C.CameraEventType.PINCH];
+    ssc.translateEventTypes = [];
     ssc.lookEventTypes = [];
 
     const defaults = viewer.cesiumWidget.screenSpaceEventHandler;
@@ -329,10 +377,98 @@
     defaults.removeInputAction(C.ScreenSpaceEventType.LEFT_CLICK);
 
     const handler = new C.ScreenSpaceEventHandler(canvas);
+
+    /* 自定义拖动状态机：
+       - 左键拖（无 Alt）：绕球心旋转（orbitGlobeCenter）
+       - Alt+左键拖：抬头/低头（lookBy）
+       - 双击后按住左键拖：绕双击点环视（pivotDrag）
+       - 右键拖：缩放（zoomBy）
+       - 中键拖：平移（panBy） */
+    let dragMode = null;
+    let dragLast = { x: 0, y: 0 };
+    let suppressDrag = false; // 双击后松手，用于延迟检测：若短时间再按下则进入环视
+    let pendingPivotPos = null;
+    let pivotArmed = false;
+    let pivotTimer = null;
+
+    function posOf(e) { return new C.Cartesian2(e.position.x, e.position.y); }
+
     handler.setInputAction((e) => {
       if (GE.tools && GE.tools.isActive()) return;
-      zoomToward(e.position, 0.5);
-    }, C.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+      if (dragMode) { endDrag(); return; }
+      // 双击 = 放大（快速双击）；双击后按住拖 = 环视（在 LEFT_DOWN 里检测）
+      const p = posOf(e);
+      if (pivotArmed && pendingPivotPos && Math.abs(pendingPivotPos.x - p.x) < 3 && Math.abs(pendingPivotPos.y - p.y) < 3) {
+        // 快速双击：放大
+        zoomToward(p, 0.5);
+        pivotArmed = false;
+        pendingPivotPos = null;
+        return;
+      }
+      pivotArmed = true;
+      pendingPivotPos = p;
+      if (pivotTimer) clearTimeout(pivotTimer);
+      pivotTimer = setTimeout(() => { pivotArmed = false; pendingPivotPos = null; }, 300);
+    }, C.ScreenSpaceEventType.LEFT_CLICK);
+
+    function beginDrag(e, mode) {
+      if (GE.tools && GE.tools.isActive()) return;
+      cancelMotion();
+      dragMode = mode;
+      dragLast = { x: e.position.x, y: e.position.y };
+      if (mode === 'pivot') {
+        // 双击后按住：进入环视（旋转点锁定在双击处）
+        if (!startPivot(posOf(e))) { dragMode = null; return; }
+      }
+    }
+    function moveDrag(e) {
+      if (!dragMode) return;
+      const pos = e.endPosition || e.position;
+      const dx = pos.x - dragLast.x;
+      const dy = pos.y - dragLast.y;
+      dragLast = { x: pos.x, y: pos.y };
+      if (dragMode === 'orbit') orbitGlobeCenter(dx, dy);
+      else if (dragMode === 'look') lookBy(dy);
+      else if (dragMode === 'pivot') pivotDrag(dx, dy);
+      else if (dragMode === 'zoom') zoomBy(Math.exp(dy * 0.0022));
+      else if (dragMode === 'pan') panBy(-dx * 0.15, dy * 0.15);
+    }
+    function endDrag() {
+      dragMode = null;
+      endPivot();
+    }
+
+    handler.setInputAction((e) => {
+      // 双击后 300ms 内再按下左键 = 锁定旋转点环视（谷歌地球手感）；否则普通绕球心旋转
+      if (pivotArmed) {
+        clearTimeout(pivotTimer);
+        pivotTimer = null;
+        pivotArmed = false;
+        pendingPivotPos = null;
+        beginDrag(e, 'pivot');
+        return;
+      }
+      beginDrag(e, 'orbit');
+    }, C.ScreenSpaceEventType.LEFT_DOWN);
+    handler.setInputAction((e) => {
+      endDrag();
+    }, C.ScreenSpaceEventType.LEFT_UP);
+    // Alt+左键拖：抬头/低头
+    handler.setInputAction((e) => {
+      beginDrag(e, 'look');
+    }, { eventType: C.ScreenSpaceEventType.LEFT_DOWN, modifier: C.KeyboardEventModifier.ALT });
+    // 通用移动：按当前 dragMode 分发
+    handler.setInputAction((e) => {
+      moveDrag(e);
+    }, C.ScreenSpaceEventType.MOUSE_MOVE);
+    // 右键拖：缩放
+    handler.setInputAction((e) => {
+      beginDrag(e, 'zoom');
+    }, C.ScreenSpaceEventType.RIGHT_DOWN);
+    // 中键拖：平移
+    handler.setInputAction((e) => {
+      beginDrag(e, 'pan');
+    }, C.ScreenSpaceEventType.MIDDLE_DOWN);
 
     // 右键双击：缩小
     let lastRight = { t: 0, x: 0, y: 0 };
@@ -350,8 +486,7 @@
         lastRight = { t: now, x, y };
       }
     }, true);
-    // 滚轮缩小（deltaY>0）时附加「俯仰回正」；不 preventDefault，缩放仍由 Cesium 原生处理，
-    // 这样方向、灵敏度、极地安全都由原生保证，我们只叠加回正手感。
+    // 滚轮缩小（deltaY>0）时附加「俯仰回正」；不 preventDefault，缩放仍由 Cesium 原生处理
     canvas.addEventListener('wheel', (e) => {
       if (e.deltaY > 0) relaxUntil = performance.now() + 260;
     }, { passive: true });
