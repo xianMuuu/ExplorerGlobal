@@ -21,6 +21,7 @@
   const heldSince = Object.create(null);
   const keyToAction = Object.create(null); // e.code -> 动作名
   const vel = { panX: 0, panY: 0, zoom: 0, rot: 0, tilt: 0 };
+  let zoomInertia = 0; // 滚轮缩放惯性（对数速度，正值拉远）
   let lastTime = 0;
   let anim = null;
 
@@ -108,11 +109,29 @@
     camera.moveForward(currentRange() - range);
   }
 
-  /* factor < 1 拉近，> 1 拉远 */
+  /* factor < 1 拉近，> 1 拉远。
+     围绕屏幕中心的地面点缩放（lookAt 保持该点在屏幕中央），
+     这样倾斜视角下地球也不会随缩放跑到屏幕下方。
+     缩小（factor>1）时俯仰角逐步回正到垂直俯视（谷歌地球手感）；放大保持当前倾斜。 */
   function zoomBy(factor) {
-    const r = currentRange();
-    const next = clamp(r * factor, MIN_RANGE, MAX_RANGE);
-    if (Math.abs(next - r) > 1e-3) camera.moveForward(r - next);
+    const target = centerTarget();
+    if (!target) {
+      // 看向太空时没有地面锚点，退化为沿视线移动
+      camera.moveForward(currentRange() * (1 - factor));
+      return;
+    }
+    const c = hprAbout(target);
+    const next = clamp(c.range * factor, MIN_RANGE, MAX_RANGE);
+    let pitch = c.pitch;
+    if (factor > 1) {
+      // 拉得越远回正越多；逐帧小步累积，丝滑过渡到俯视
+      const k = clamp(1 - 1 / factor, 0, 1) * 0.5;
+      pitch = c.pitch + (MIN_PITCH - c.pitch) * k;
+    }
+    if (Math.abs(next - c.range) > 1e-3 || Math.abs(pitch - c.pitch) > 1e-6) {
+      camera.lookAt(target, new C.HeadingPitchRange(c.heading, pitch, next));
+      camera.lookAtTransform(C.Matrix4.IDENTITY);
+    }
   }
 
   /* 以鼠标所指的地面点为锚点缩放（双击用），带缓动 */
@@ -214,6 +233,12 @@
       panBy(vel.panX * speed * dt, vel.panY * speed * dt);
     }
     if (Math.abs(vel.zoom) > eps) zoomBy(Math.exp(-vel.zoom * ZOOM_RATE * dt));
+    if (Math.abs(zoomInertia) > 0.0005) {
+      zoomBy(Math.exp(zoomInertia));
+      zoomInertia *= 0.93; // 惯性衰减
+    } else if (zoomInertia !== 0) {
+      zoomInertia = 0;
+    }
     if (Math.abs(vel.rot) > eps || Math.abs(vel.tilt) > eps) {
       orbit(vel.rot * ROT_RATE * dt, vel.tilt * TILT_RATE * dt);
     }
@@ -279,7 +304,9 @@
     // 左键拖动：抓着地球平移；滚轮 / 右键拖动：以鼠标位置为锚点缩放；
     // 中键拖动、Shift/Ctrl+左键拖动：旋转和倾斜
     ssc.rotateEventTypes = [C.CameraEventType.LEFT_DRAG];
-    ssc.zoomEventTypes = [C.CameraEventType.WHEEL, C.CameraEventType.PINCH, C.CameraEventType.RIGHT_DRAG];
+    // 滚轮改由下方自定义 handler 接管（围绕屏幕中心地面点缩放，倾斜时不跑偏）；
+    // 触屏捏合、右键拖动仍走 Cesium 默认缩放
+    ssc.zoomEventTypes = [C.CameraEventType.PINCH, C.CameraEventType.RIGHT_DRAG];
     ssc.tiltEventTypes = [
       C.CameraEventType.MIDDLE_DRAG,
       C.CameraEventType.PINCH,
@@ -315,7 +342,13 @@
         lastRight = { t: now, x, y };
       }
     }, true);
-    canvas.addEventListener('wheel', cancelMotion, { capture: true, passive: true });
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      cancelMotion();
+      // 归一化 deltaY（像素/行/页），累积成惯性速度：向下滚拉远，向上滚拉近
+      const d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 120 : 1);
+      zoomInertia += (d / 120) * 0.14;
+    }, { passive: false });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 

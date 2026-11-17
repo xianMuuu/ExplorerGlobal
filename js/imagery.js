@@ -523,7 +523,12 @@
 
     const local = byId('bluemarble');
     try {
-      const provider = await C.SingleTileImageryProvider.fromUrl(local.url, { credit: local.credit });
+      // 显式用等距柱状投影 + 全球范围（±90°），否则 Web Mercator 只到 ±85.05°，南北极会露出底色成空洞
+      const provider = await C.SingleTileImageryProvider.fromUrl(local.url, {
+        credit: local.credit,
+        tilingScheme: new C.GeographicTilingScheme({ rectangle: C.Rectangle.fromDegrees(-180, -90, 180, 90) }),
+        rectangle: C.Rectangle.fromDegrees(-180, -90, 180, 90),
+      });
       M.baseLayer = viewer.imageryLayers.addImageryProvider(provider, 0);
       setStatus('bluemarble', 'ok');
     } catch (e) {

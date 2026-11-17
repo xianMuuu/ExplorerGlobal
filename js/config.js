@@ -22,6 +22,8 @@ GE.config = {
   // 可选：Google Maps API 密钥（需开通 Map Tiles API）用于启用实景三维。
   // 从 keys.local.js（不入库）读取，缺失/为空则不启用，其余功能不受影响。
   googleMapsApiKey: window.GE_API_KEY || '',
+  // 高德 Web服务 Key（用于搜索地名，国内直连、无需梯子）。从 keys.local.js 读取。
+  amapKey: window.GE_AMAP_KEY || '',
 };
 
 /*

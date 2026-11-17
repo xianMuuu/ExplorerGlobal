@@ -128,6 +128,33 @@
     })).filter((r) => Number.isFinite(r.lat) && Number.isFinite(r.lon));
   }
 
+  /* 高德地理编码（国内直连、无需梯子）。返回 GCJ-02 坐标，转回 WGS-84。 */
+  async function amap(q) {
+    const key = cfg.amapKey;
+    if (!key) throw new Error('未配置高德 Key');
+    const url = 'https://restapi.amap.com/v3/geocode/geo?key=' + encodeURIComponent(key) + '&address=' + encodeURIComponent(q) + '&output=json';
+    const data = await fetchJSON(url, 5000);
+    const geos = (data && data.geocodes) || [];
+    const out = [];
+    for (const g of geos) {
+      if (!g.location) continue;
+      const parts = g.location.split(',');
+      if (parts.length !== 2) continue;
+      const lon = parseFloat(parts[0]);
+      const lat = parseFloat(parts[1]);
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+      const wgs = GE.geo.gcj2wgs(lon, lat);
+      out.push({
+        name: g.formatted_address || g.province || q,
+        display: g.formatted_address || '',
+        lat: wgs[1],
+        lon: wgs[0],
+        source: '高德地图',
+      });
+    }
+    return out;
+  }
+
   /* 离线地名表。exactOnly 为真时只返回名称或别名完全一致的条目。 */
   function local(q, exactOnly) {
     const s = q.trim().toLowerCase();
@@ -158,7 +185,8 @@
     if (exact.length) return { results: exact, via: '离线地名表' };
 
     let failures = 0;
-    const services = [['OpenStreetMap', nominatim], ['Esri', arcgis]];
+    // 高德优先（国内直连、无需梯子，且中文地名更准）；失败再回退 OpenStreetMap / Esri
+    const services = [['高德地图', amap], ['OpenStreetMap', nominatim], ['Esri', arcgis]];
     for (const [name, fn] of services) {
       try {
         const r = await fn(q);
