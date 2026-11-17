@@ -5,7 +5,8 @@
   let viewer, scene, camera, canvas;
 
   const MIN_RANGE = 25; // 最近离地面的距离（米）
-  const MAX_RANGE = 5.0e7;
+  // 最远缩放：停在“完整地球视图”。再远（比如 5e7）地球会缩成一个小球，不像谷歌地球——谷歌地球往下滚到底只缩到整球默认状态就停。
+  const MAX_RANGE = 2.2e7;
   // 俯仰角范围：接近垂直俯视（留一点余量，否则朝向会丢失）到接近平视
   const MIN_PITCH = -C.Math.PI_OVER_TWO + 0.0015;
   const MAX_PITCH = C.Math.toRadians(-2);

@@ -19,9 +19,9 @@ GE.config = {
   degrade: { windowMs: 12000, minErrors: 6, errorRatio: 0.6 },
   // 可选地形（ArcGIS 全球高程，无需密钥）
   terrainUrl: 'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer',
-  // 可选：填入自己的 Google Maps API 密钥（需开通 Map Tiles API）后，启用 Google 实景三维模型。
-  // 留空则不启用。注意：这一项没有密钥无法实测，属于未验证功能。
-  googleMapsApiKey: '',
+  // 可选：Google Maps API 密钥（需开通 Map Tiles API）用于启用实景三维。
+  // 从 keys.local.js（不入库）读取，缺失/为空则不启用，其余功能不受影响。
+  googleMapsApiKey: window.GE_API_KEY || '',
 };
 
 /*

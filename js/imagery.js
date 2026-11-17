@@ -176,6 +176,7 @@
   }
 
   function tileUrl(def, x, y, level) {
+    if (def._proxy) return def._proxy + level + '/' + x + '/' + y;
     const subs = def.subdomains || [''];
     return def.url
       .replace('{s}', subs[(x + y + level) % subs.length])
@@ -323,12 +324,16 @@
   }
 
   function createProvider(def, kind, src) {
+    // 瓦片统一走本地 server 的缓存代理：/tiles/<源>/<类型>/<z>/<x>/<y>。
+    // server 命中本地缓存直接返回（断网/无梯子也可用），未命中则抓上游并落盘。
+    const proxyBase = '/tiles/' + src.id + '/' + kind + '/';
+    const def2 = Object.assign({}, def, { url: proxyBase + '{z}/{x}/{y}', subdomains: [], _proxy: proxyBase });
     const provider = new C.UrlTemplateImageryProvider({
-      url: def.url,
-      subdomains: def.subdomains,
+      url: def2.url,
+      subdomains: def2.subdomains,
       minimumLevel: 0,
-      maximumLevel: def.maximumLevel,
-      tilingScheme: def.gcj02 === true ? new GCJ02TilingScheme() : new C.WebMercatorTilingScheme(),
+      maximumLevel: def2.maximumLevel,
+      tilingScheme: def2.gcj02 === true ? new GCJ02TilingScheme() : new C.WebMercatorTilingScheme(),
       // 声明为 256：scale=2 的瓦片实际是 512 像素，相当于每个屏幕像素有 2 倍采样，画面更锐利
       tileWidth: 256,
       tileHeight: 256,
@@ -339,7 +344,7 @@
 
     const st = statOf(src.id);
     const direct = provider.requestImage.bind(provider);
-    const original = def.gcj02 === 'mainland' && GE.region ? withMainlandFix(direct, def) : direct;
+    const original = def2.gcj02 === 'mainland' && GE.region ? withMainlandFix(direct, def2) : direct;
     provider.requestImage = function (x, y, level, request) {
       const p = original(x, y, level, request);
       if (p && typeof p.then === 'function') {
@@ -370,7 +375,7 @@
     const timer = setTimeout(() => ctrl.abort(), cfg.probeTimeout);
     let ok = false;
     try {
-      const res = await fetch(src.probe, { mode: 'cors', cache: 'no-store', signal: ctrl.signal });
+      const res = await fetch('/tiles/' + id + '/sat/3/6/3', { cache: 'no-store', signal: ctrl.signal });
       if (res.ok) {
         const blob = await res.blob();
         ok = blob.size > 100 && /^image\//.test(blob.type || '');

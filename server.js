@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 const { pathToFileURL } = require('url');
+const tiles = require('./server-tiles.js');
 
 const APP_NAME = 'ExplorerGlobal';
 const args = process.argv.slice(2);
@@ -152,6 +153,10 @@ function handle(req, res) {
     });
     return;
   }
+  if (urlPath === '/tiles' || urlPath.startsWith('/tiles/')) {
+    tiles.handle(req, res, urlPath);
+    return;
+  }
   handleStatic(req, res, urlPath);
 }
 
@@ -184,6 +189,7 @@ function listen(host, required) {
     if (e.code !== 'ENOENT') console.error('[提示] data/config.json 读取失败，已按默认设置运行：' + e.message);
   }
   api = createApi({ store: fsStore(DATA), config });
+  tiles.init({ dataDir: DATA });
 
   if (HOST) {
     await listen(HOST, true);

@@ -8,6 +8,9 @@ backup/
 tools/shots/
 tools/steps/
 
+# ---------- 本地密钥（不公开） ----------
+keys.local.js
+
 # ---------- 依赖 ----------
 node_modules/
 
