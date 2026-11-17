@@ -56,7 +56,9 @@
   globe.maximumScreenSpaceError = cfg.maxScreenSpaceError;
   scene.postProcessStages.fxaa.enabled = true;
   globe.tileCacheSize = 600;
-  globe.baseColor = C.Color.fromCssColorString('#0b1a33');
+  // 海洋蓝底色：WebMercator 卫星瓦片只覆盖到 ±85°，极地露出的是这个底色，
+  // 用明亮的海洋蓝而不是深蓝/黑，极地就不会像“黑窟窿”。
+  globe.baseColor = C.Color.fromCssColorString('#12385e');
   globe.enableLighting = false;
   globe.showGroundAtmosphere = true;
   scene.highDynamicRange = false;

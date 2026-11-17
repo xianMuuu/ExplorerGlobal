@@ -21,7 +21,7 @@
   const heldSince = Object.create(null);
   const keyToAction = Object.create(null); // e.code -> 动作名
   const vel = { panX: 0, panY: 0, zoom: 0, rot: 0, tilt: 0 };
-  let zoomInertia = 0; // 滚轮缩放惯性（对数速度，正值拉远）
+  let relaxUntil = 0; // 缩小（滚轮向下）后，在此时间戳前持续把俯仰角回正到垂直俯视
   let lastTime = 0;
   let anim = null;
 
@@ -70,6 +70,8 @@
     const c = hprAbout(target);
     const heading = c.heading + (dHeading || 0);
     const pitch = clamp(c.pitch + (dPitch || 0), MIN_PITCH, MAX_PITCH);
+    // 极点附近 heading/pitch 可能退化产生 NaN，保护相机不被锁死
+    if (!Number.isFinite(heading) || !Number.isFinite(pitch) || !Number.isFinite(c.range)) return false;
     camera.lookAt(target, new C.HeadingPitchRange(heading, pitch, clamp(c.range, MIN_RANGE, MAX_RANGE)));
     camera.lookAtTransform(C.Matrix4.IDENTITY);
     return true;
@@ -112,7 +114,8 @@
   /* factor < 1 拉近，> 1 拉远。
      围绕屏幕中心的地面点缩放（lookAt 保持该点在屏幕中央），
      这样倾斜视角下地球也不会随缩放跑到屏幕下方。
-     缩小（factor>1）时俯仰角逐步回正到垂直俯视（谷歌地球手感）；放大保持当前倾斜。 */
+     缩小（factor>1）时俯仰角逐步回正到垂直俯视（谷歌地球手感）；放大保持当前倾斜。
+     注意：本函数仅用于键盘 +/- 和导航环滑杆的连续缩放；滚轮走 Cesium 原生缩放（见 bindMouse）。 */
   function zoomBy(factor) {
     const target = centerTarget();
     if (!target) {
@@ -128,6 +131,7 @@
       const k = clamp(1 - 1 / factor, 0, 1) * 0.5;
       pitch = c.pitch + (MIN_PITCH - c.pitch) * k;
     }
+    if (!Number.isFinite(next) || !Number.isFinite(pitch) || !Number.isFinite(c.heading)) return;
     if (Math.abs(next - c.range) > 1e-3 || Math.abs(pitch - c.pitch) > 1e-6) {
       camera.lookAt(target, new C.HeadingPitchRange(c.heading, pitch, next));
       camera.lookAtTransform(C.Matrix4.IDENTITY);
@@ -233,11 +237,14 @@
       panBy(vel.panX * speed * dt, vel.panY * speed * dt);
     }
     if (Math.abs(vel.zoom) > eps) zoomBy(Math.exp(-vel.zoom * ZOOM_RATE * dt));
-    if (Math.abs(zoomInertia) > 0.0005) {
-      zoomBy(Math.exp(zoomInertia));
-      zoomInertia *= 0.93; // 惯性衰减
-    } else if (zoomInertia !== 0) {
-      zoomInertia = 0;
+    // 滚轮缩小后：在 relaxUntil 之前把俯仰角平滑回正到垂直俯视（只改俯仰，不动距离）
+    if (performance.now() < relaxUntil) {
+      const t = centerTarget();
+      if (t) {
+        const c = hprAbout(t);
+        const dP = (MIN_PITCH - c.pitch) * (1 - Math.exp(-dt * 5));
+        if (Math.abs(dP) > 1e-5) orbit(0, dP);
+      }
     }
     if (Math.abs(vel.rot) > eps || Math.abs(vel.tilt) > eps) {
       orbit(vel.rot * ROT_RATE * dt, vel.tilt * TILT_RATE * dt);
@@ -301,12 +308,13 @@
     ssc.inertiaSpin = 0.92;
     ssc.inertiaTranslate = 0.92;
     ssc.inertiaZoom = 0.82;
+    // 滚轮缩放速率：Cesium 默认 5.0，调到 2.0 让缩放更缓慢、更接近谷歌地球手感
+    ssc.zoomFactor = 2.0;
     // 左键拖动：抓着地球平移；滚轮 / 右键拖动：以鼠标位置为锚点缩放；
-    // 中键拖动、Shift/Ctrl+左键拖动：旋转和倾斜
+    // 中键拖动、Shift/Ctrl+左键拖动：旋转和倾斜。
+    // 滚轮恢复 Cesium 原生处理（方向正确、极地安全、带惯性），不再自建缩放。
     ssc.rotateEventTypes = [C.CameraEventType.LEFT_DRAG];
-    // 滚轮改由下方自定义 handler 接管（围绕屏幕中心地面点缩放，倾斜时不跑偏）；
-    // 触屏捏合、右键拖动仍走 Cesium 默认缩放
-    ssc.zoomEventTypes = [C.CameraEventType.PINCH, C.CameraEventType.RIGHT_DRAG];
+    ssc.zoomEventTypes = [C.CameraEventType.WHEEL, C.CameraEventType.PINCH, C.CameraEventType.RIGHT_DRAG];
     ssc.tiltEventTypes = [
       C.CameraEventType.MIDDLE_DRAG,
       C.CameraEventType.PINCH,
@@ -342,13 +350,11 @@
         lastRight = { t: now, x, y };
       }
     }, true);
+    // 滚轮缩小（deltaY>0）时附加「俯仰回正」；不 preventDefault，缩放仍由 Cesium 原生处理，
+    // 这样方向、灵敏度、极地安全都由原生保证，我们只叠加回正手感。
     canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      cancelMotion();
-      // 归一化 deltaY（像素/行/页），累积成惯性速度：向下滚拉远，向上滚拉近
-      const d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 120 : 1);
-      zoomInertia += (d / 120) * 0.14;
-    }, { passive: false });
+      if (e.deltaY > 0) relaxUntil = performance.now() + 260;
+    }, { passive: true });
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
