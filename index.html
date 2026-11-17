@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Google Earth Pro（本地复刻版）</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="assets/favicon.svg">
+<link rel="stylesheet" href="lib/Cesium/Widgets/widgets.css">
+<link rel="stylesheet" href="css/earth.css">
+</head>
+<body>
+<div id="app">
+  <nav id="menubar" aria-label="菜单栏"></nav>
+
+  <div id="main">
+    <aside id="sidebar" aria-label="侧栏">
+      <section class="panel" id="panel-search">
+        <header class="panel-head"><span class="tw"></span>搜索</header>
+        <div class="panel-body">
+          <form id="search-form" autocomplete="off">
+            <input id="search-input" type="text" placeholder="搜索地点、地址或经纬度" spellcheck="false" aria-label="搜索">
+            <button id="search-btn" type="submit">搜索</button>
+          </form>
+          <div class="search-hint">例如：香港大学、天安门、22.283, 114.137</div>
+          <div id="search-status" class="search-status" hidden></div>
+          <ul id="search-results" class="result-list"></ul>
+          <div class="search-links">
+            <a href="#" id="search-history-link">历史记录</a>
+            <a href="#" id="search-clear-link">清除</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel grow" id="panel-places">
+        <header class="panel-head"><span class="tw"></span>地点</header>
+        <div class="panel-body">
+          <div id="places-tree" class="tree"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-layers">
+        <header class="panel-head"><span class="tw"></span>图层</header>
+        <div class="panel-body">
+          <div id="layers-tree" class="tree"></div>
+        </div>
+      </section>
+    </aside>
+
+    <div id="viewwrap">
+      <div id="toolbar" role="toolbar" aria-label="工具栏"></div>
+
+      <div id="view">
+        <div id="cesiumContainer"></div>
+
+        <div id="nav" class="nav" aria-label="导航控件">
+          <div class="nav-ring" id="nav-look">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <g id="nav-ring-rot">
+                <circle class="ring" cx="50" cy="50" r="41"><title>拖动圆环可旋转视图</title></circle>
+                <g class="north" id="nav-north">
+                  <title>点击恢复正北朝上</title>
+                  <circle cx="50" cy="9" r="8.5"/>
+                  <text x="50" y="13" text-anchor="middle">N</text>
+                </g>
+              </g>
+              <circle class="inner" cx="50" cy="50" r="28"/>
+              <g class="arrow" data-act="tiltUp"><title>向上倾斜（看向地平线）</title><circle cx="50" cy="31" r="8"/><path d="M50 26.5l5.5 7.5h-11z"/></g>
+              <g class="arrow" data-act="tiltDown"><title>向下倾斜（俯视）</title><circle cx="50" cy="69" r="8"/><path d="M50 73.5l5.5-7.5h-11z"/></g>
+              <g class="arrow" data-act="rotLeft"><title>向左旋转</title><circle cx="31" cy="50" r="8"/><path d="M26.5 50l7.5-5.5v11z"/></g>
+              <g class="arrow" data-act="rotRight"><title>向右旋转</title><circle cx="69" cy="50" r="8"/><path d="M73.5 50l-7.5-5.5v11z"/></g>
+              <path class="glyph" d="M40.5 50q9.5-8.5 19 0q-9.5 8.5-19 0z"/>
+              <circle class="glyph-dot" cx="50" cy="50" r="2.6"/>
+            </svg>
+          </div>
+
+          <div class="nav-ring small" id="nav-move">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="inner" cx="50" cy="50" r="46"/>
+              <g class="arrow" data-act="panUp"><title>向上移动</title><circle cx="50" cy="20" r="13"/><path d="M50 12l9 12.5h-18z"/></g>
+              <g class="arrow" data-act="panDown"><title>向下移动</title><circle cx="50" cy="80" r="13"/><path d="M50 88l9-12.5h-18z"/></g>
+              <g class="arrow" data-act="panLeft"><title>向左移动</title><circle cx="20" cy="50" r="13"/><path d="M12 50l12.5-9v18z"/></g>
+              <g class="arrow" data-act="panRight"><title>向右移动</title><circle cx="80" cy="50" r="13"/><path d="M88 50l-12.5-9v18z"/></g>
+              <path class="glyph hand" d="M43 56v-9.5a2 2 0 0 1 4 0V44a2 2 0 0 1 4 0v1a2 2 0 0 1 4 0v1.5a2 2 0 0 1 4 0V54c0 4.5-3 7.5-7.5 7.5S43 59.5 43 56z"/>
+            </svg>
+          </div>
+
+          <div class="nav-zoom" id="nav-zoom">
+            <button type="button" data-act="zoomIn" title="放大">+</button>
+            <div class="track" id="nav-zoom-track" title="拖动可缩放"><div class="thumb" id="nav-zoom-thumb"></div></div>
+            <button type="button" data-act="zoomOut" title="缩小">&minus;</button>
+          </div>
+        </div>
+
+        <div id="infocard" class="infocard" hidden></div>
+        <div id="toolpanel" class="toolpanel" hidden></div>
+        <div id="toasts" aria-live="polite"></div>
+
+        <div id="scalebar" class="scalebar"><span id="scalebar-label"></span><i id="scalebar-line"></i></div>
+        <div id="credits"></div>
+
+        <footer id="statusbar">
+          <span class="sb-item sb-stream" title="瓦片流加载进度">
+            <svg viewBox="0 0 20 20" class="stream-ring" aria-hidden="true"><circle cx="10" cy="10" r="7" class="bg"/><circle cx="10" cy="10" r="7" class="fg" id="stream-fg"/></svg>
+            <span id="sb-stream-text">正在初始化…</span>
+          </span>
+          <span class="sb-item" id="sb-source">影像：—</span>
+          <span class="sb-spacer"></span>
+          <span class="sb-item mono" id="sb-latlon">—</span>
+          <span class="sb-item mono" id="sb-elev">海拔 —</span>
+          <span class="sb-item mono" id="sb-eye">视角海拔高度 —</span>
+        </footer>
+
+        <div id="loading"><div class="spinner"></div><div id="loading-text">正在加载地球…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+<input type="file" id="file-kml" accept=".kml,.kmz" hidden>
+
+<script>window.CESIUM_BASE_URL = 'lib/Cesium/';</script>
+<script src="lib/Cesium/Cesium.js"></script>
+<script src="js/config.js"></script>
+<script src="js/region-cn.js"></script>
+<script src="js/region.js"></script>
+<script src="js/imagery.js"></script>
+<script src="js/controls.js"></script>
+<script src="js/search.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
